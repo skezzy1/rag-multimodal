@@ -1,0 +1,15 @@
+streamlit==1.45.0
+sentence-transformers==2.7.0
+transformers==4.52.4
+torch
+torchaudio
+torchvision
+faiss-cpu==1.11.0
+numpy==1.26.4
+requests==2.32.3
+Pillow==11.2.1
+google-generativeai==0.8.5
+tqdm==4.67.1
+python-dotenv==1.1.0
+beautifulsoup4==4.12.3
+lxml==5.4.0
