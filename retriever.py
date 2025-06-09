@@ -1,12 +1,10 @@
-# retriever.py
 import faiss
 import numpy as np
 import json
 import os
-from embedding import get_multimodal_embedding # Імпортуємо правильну функцію
+from embedding import get_multimodal_embedding 
 from typing import List, Dict
 
-# --- Конфігурація шляхів ---
 INDEX_DIR = os.getenv("INDEX_DIR", "index")
 FAISS_INDEX_PATH = os.path.join(INDEX_DIR, 'index.faiss')
 METADATA_PATH = os.path.join(INDEX_DIR, 'metadata.json')
@@ -39,24 +37,18 @@ class MultimodalRetriever:
             self.metadata = []
 
     def retrieve(self, query_text: str, top_k: int = 5) -> List[Dict]:
-        """
-        Знаходить top_k найбільш релевантних статей для текстового запиту.
-        """
         if not self.index:
             print("❌ Індекс не завантажено. Пошук неможливий.")
             return []
             
-        # Створюємо ембединг для запиту (тільки текст, без зображень)
         query_embedding = get_multimodal_embedding(query_text, image_paths=[])
 
         if query_embedding is None:
             print("❌ Не вдалося створити ембединг для запиту.")
             return []
 
-        # FAISS очікує 2D масив
         query_embedding = np.array([query_embedding]).astype('float32')
 
-        # Виконуємо пошук
         distances, indices = self.index.search(query_embedding, top_k)
 
         retrieved_articles = []
@@ -75,7 +67,6 @@ class MultimodalRetriever:
         return retrieved_articles
 
 if __name__ == '__main__':
-    # Тестовий запуск
     print("--- Тестування ретривера ---")
     retriever = MultimodalRetriever()
     if retriever.index:
