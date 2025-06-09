@@ -6,6 +6,8 @@ services:
     container_name: multimodal_rag_app
     ports:
       - "8501:8501"
+    environment:
+      - IMAGE_DIR=/app/images
     volumes:
       - ./data:/app/data
       - ./index:/app/index
