@@ -4,21 +4,19 @@ import json
 import os
 import re
 from urllib.parse import urljoin, urlparse
-from PIL import Image # Use PIL.Image as Image
+from PIL import Image 
 import io
 from tqdm import tqdm
 import hashlib
 from dotenv import load_dotenv
-import concurrent.futures # Для паралельного виконання
+import concurrent.futures 
 
 load_dotenv()
 
-# --- Конфігурація ---
 ROOT_DOMAIN = os.getenv("ROOT_DOMAIN", "https://www.deeplearning.ai") 
 OUTPUT_PATH = os.getenv("ARTICLES_PATH", "data/articles.json")
 IMAGE_DIR = os.getenv("IMAGE_DIR", "images") 
 
-# ✅ Створення директорій з перевіркою
 if os.path.dirname(OUTPUT_PATH):
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -63,7 +61,6 @@ def download_image(image_url, image_dir, article_slug):
         else:
             img = img.convert('RGB')
 
-        # Виправлено: використання змінної save_format
         save_format = final_image_name.split('.')[-1].upper()
         if save_format == 'JPG':
             save_format = 'JPEG'
@@ -145,7 +142,6 @@ def parse_single_issue_page(url):
         "images": [] 
     }
     
-    # --- Вилучення заголовка ---
     title_element = soup.select_one("h1.post-full-title") or \
                     soup.select_one("h1.article-title") or \
                     soup.select_one("h1") or \
@@ -156,35 +152,27 @@ def parse_single_issue_page(url):
     else:
         print(f"⚠️ Заголовок не знайдено для {url}")
 
-
-    # --- Вилучення дати та часу читання ---
     date_time_elements = soup.select("time.post-full-meta-date, span.byline-date, meta[property='article:published_time'], p, div, span, li")
     
     for elem in date_time_elements:
         text = elem.get_text(strip=True)
         
-        # Regex для пошуку дат у форматі "Month Day, Year"
         date_match = re.search(r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}", text)
         if date_match and not article_data["date"]:
             article_data["date"] = date_match.group(0)
             print(f"DEBUG: Знайдено дату: '{article_data['date']}' з тексту: '{text}'")
         
-        # Regex для пошуку часу читання "X min read"
         time_match = re.search(r"(\d+)\s+min read", text, re.IGNORECASE)
         if time_match and not article_data["reading_time"]:
-            article_data["reading_time"] = time_match.group(0) # Зберігаємо повний рядок "X min read"
+            article_data["reading_time"] = time_match.group(0)
             print(f"DEBUG: Знайдено час читання: '{article_data['reading_time']}' з тексту: '{text}'")
         
         if article_data["date"] and article_data["reading_time"]:
-            break # Зупиняємо, якщо обидва поля знайдені
+            break 
 
-
-    # --- Вилучення текстового вмісту та зображень за новою логікою ---
-    # Пріоритетний селектор для основного контенту
     main_article_content_div = soup.find('div', class_='prose--styled justify-self-center post_postContent__wGZtc')
     
     if not main_article_content_div:
-        # Запасні загальні селектори, якщо пріоритетний не знайдено
         content_div_selectors = [
             'div.gh-content',               
             'div.kg-card-markdown',         
@@ -214,20 +202,16 @@ def parse_single_issue_page(url):
     images_in_content = []
     article_slug = re.sub(r'[^\w-]', '', article_data["title"].lower()[:50] or hashlib.md5(url.encode('utf-8')).hexdigest()[:8])
 
-    # Ітеруємося через дочірні елементи основного div контенту
     for child in main_article_content_div.children:
-        # Зупиняємо парсинг, якщо знаходимо заголовок "News" (h2 з id="news")
         if child.name == 'h2' and child.get('id') == 'news':
             print("INFO: Знайдено заголовок 'News'. Припиняємо парсинг основного контенту.")
             break 
         
-        # Обробляємо параграфи (p теги без класу)
         if child.name == 'p' and not child.get('class'): 
             text = child.get_text(separator='\n', strip=True)
             if text:
                 article_content_parts.append(text)
         
-        # Обробляємо зображення всередині figure (з класами kg-card kg-image-card)
         elif child.name == 'figure' and 'kg-card' in child.get('class', []) and 'kg-image-card' in child.get('class', []):
             img_tag = child.find('img')
             if img_tag and img_tag.get('src'):
@@ -236,21 +220,18 @@ def parse_single_issue_page(url):
                     continue
                 full_img_url = urljoin(url, src)
                 
-                # Додаємо перевірку, щоб уникнути іконок, логотипів, SVG та рекламних зображень
                 if any(x in full_img_url.lower() for x in ['icons', 'logo', 'avatar', '.svg', 'ads']):
                     continue
                 
                 downloaded_name = download_image(full_img_url, IMAGE_DIR, article_slug)
                 if downloaded_name:
                     images_in_content.append(downloaded_name)
-                    # Додатково: додаємо підпис до зображення до контенту, якщо він є
                     caption_tag = child.find('figcaption')
                     if caption_tag:
                         caption_text = caption_tag.get_text(strip=True)
                         if caption_text:
                             article_content_parts.append(f"Image Caption: {caption_text}")
         
-        # Додаємо інші елементи, які можуть містити релевантний текст (заголовки, списки тощо)
         elif child.name in ['h1', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'div', 'blockquote']:
             text = child.get_text(separator='\n', strip=True)
             if text:
@@ -266,7 +247,6 @@ def parse_single_issue_page(url):
     else:
         print(f"✅ Зібрано текстовий вміст (довжина: {len(article_data['content'])} символів). Початок тексту: {article_data['content'][:500]}...")
 
-    # Перевіряємо, чи є заголовок АБО контент, щоб повернути статтю
     if article_data["title"].strip() or article_data["content"].strip():
         return article_data
     else:
@@ -294,7 +274,7 @@ def main():
     print(f"🔎 Знайдено {len(issue_urls)} випусків. Починаємо обробку...")
     successful_articles_count = 0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor: # Збільшено кількість workers для прискорення
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor: 
         futures = {executor.submit(parse_single_issue_page, url): url for url in issue_urls}
         for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Обробка випусків The Batch"):
             article_from_issue = future.result()
