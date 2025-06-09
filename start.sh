@@ -17,6 +17,13 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo "Running system evaluation..."
+python evaluation.py
+
+if [ $? -ne 0 ]; then
+    echo "evaluation.py failed. Continuing to Streamlit, but check logs."
+fi
+
 echo "Starting Streamlit application in development mode..."
 streamlit run app.py \
     --server.port=8501 \
