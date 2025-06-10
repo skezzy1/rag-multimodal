@@ -4,18 +4,20 @@ import json
 import os
 import re
 from urllib.parse import urljoin, urlparse
-from PIL import Image 
+from PIL import Image
 import io
 from tqdm import tqdm
 import hashlib
 from dotenv import load_dotenv
-import concurrent.futures 
+import concurrent.futures
+import time
+import random
 
 load_dotenv()
 
-ROOT_DOMAIN = os.getenv("ROOT_DOMAIN", "https://www.deeplearning.ai") 
-OUTPUT_PATH = os.getenv("ARTICLES_PATH", "data/articles.json")
-IMAGE_DIR = os.getenv("IMAGE_DIR", "images") 
+ROOT_DOMAIN = os.getenv("ROOT_DOMAIN")
+OUTPUT_PATH = os.getenv("ARTICLES_PATH")
+IMAGE_DIR = os.getenv("IMAGE_DIR")
 
 if os.path.dirname(OUTPUT_PATH):
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
@@ -23,11 +25,6 @@ os.makedirs(IMAGE_DIR, exist_ok=True)
 
 
 def download_image(image_url, image_dir, article_slug):
-    """
-    Завантажує зображення за URL та зберігає його локально.
-    Генерує унікальне ім'я файлу, використовуючи slug статті та оригінальне ім'я зображення.
-    Обробляє різні режими зображення (наприклад, прозорість).
-    """
     try:
         response = requests.get(image_url, timeout=10)
         response.raise_for_status()
@@ -64,42 +61,43 @@ def download_image(image_url, image_dir, article_slug):
         save_format = final_image_name.split('.')[-1].upper()
         if save_format == 'JPG':
             save_format = 'JPEG'
-        img.save(image_path, format=save_format) 
-        print(f"🖼️ Завантажено зображення: {final_image_name}")
+        img.save(image_path, format=save_format)
+        print(f"Image uploaded: {final_image_name}")
         return final_image_name
 
     except requests.exceptions.RequestException as e:
-        print(f"⚠️ Помилка завантаження зображення {image_url}: {e}")
+        print(f"Image upload error {image_url}: {e}")
         return None
     except Exception as e:
-        print(f"⚠️ Помилка обробки зображення {image_url}: {e}")
+        print(f"Image processing error {image_url}: {e}")
         return None
 
 def get_all_issue_urls():
-    """
-    Виявляє всі унікальні URL-адреси випусків The Batch, ітеруючи сторінки пагінації.
-    """
     issue_urls = set()
     page_num = 1
 
     while True:
         paginated_url = f"{ROOT_DOMAIN}/the-batch/page/{page_num}/"
-        print(f"📄 Завантаження сторінки пагінації: {paginated_url}")
+        print(f"📄 Loading pagination page: {paginated_url}")
         try:
+            sleep_time = random.uniform(0.5, 1.5) 
+            print(f"Delay {sleep_time:.2f} seconds before requesting pagination {paginated_url}")
+            time.sleep(sleep_time)
+
             response = requests.get(paginated_url, timeout=15)
-            response.raise_for_status() 
+            response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            print(f"❌ Сторінка {paginated_url} не знайдена або більше немає сторінок: {e}")
-            break 
+            print(f" Page {paginated_url} not found or no more pages: {e}")
+            break
 
         soup = BeautifulSoup(response.text, "html.parser")
-        
+
         issues = soup.select("a[href*='/the-batch/issue-'][data-sentry-component='Link']")
         if not issues:
             issues = soup.select("a[href*='/the-batch/issue-']")
 
         if not issues and page_num > 1:
-            print(f"⚠️ Не знайдено жодного випуску на сторінці {paginated_url}. Завершення.")
+            print(f"⚠️ No issue found on page {paginated_url}. Ending.")
             break
 
         found_on_page = False
@@ -109,9 +107,9 @@ def get_all_issue_urls():
             if full_url.startswith(f"{ROOT_DOMAIN}/the-batch/issue-") and full_url not in issue_urls:
                 issue_urls.add(full_url)
                 found_on_page = True
-        
+
         if not found_on_page and page_num > 1:
-            print(f"⚠️ На сторінці {paginated_url} не знайдено нових випусків. Завершення.")
+            print(f"⚠️ Не знайдено жодного випуску на сторінці {paginated_url}. Завершення.")
             break
 
         page_num += 1
@@ -119,138 +117,198 @@ def get_all_issue_urls():
     print(f"🔎 Виявляємо {len(issue_urls)} унікальних URL-адрес випусків.")
     return list(issue_urls)
 
+
 def parse_single_issue_page(url):
-    """
-    Парсить одну сторінку випуску The Batch (яка, як правило, містить одну велику статтю/інформаційний бюлетень).
-    """
-    print(f"\n--- Парсинг сторінки випуску: {url} ---")
+    print(f"\n--- Parsing the release page: {url} ---")
     try:
+        sleep_time = random.uniform(1, 3) 
+        print(f"😴 Delay {sleep_time:.2f} seconds before querying {url}")
+        time.sleep(sleep_time)
+
         response = requests.get(url, timeout=15)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        print(f"❌ Не вдалося отримати {url}: {e}")
-        return None 
+        print(f"❌ Failed to retrieve {url}: {e}")
+        return None
 
     soup = BeautifulSoup(response.text, "html.parser")
 
     article_data = {
-        "url": url, 
+        "url": url,
         "title": "",
         "date": "",
         "reading_time": "",
-        "content": "", 
-        "images": [] 
+        "content": "",
+        "images": []
     }
-    
+
     title_element = soup.select_one("h1.post-full-title") or \
                     soup.select_one("h1.article-title") or \
                     soup.select_one("h1") or \
-                    soup.select_one("meta[property='og:title']")
+                    soup.select_one("meta[property='og:title']") 
     if title_element:
         article_data["title"] = title_element['content'] if title_element.name == 'meta' else title_element.get_text(strip=True)
-        print(f"✅ Знайдено заголовок: '{article_data['title']}'")
+        print(f"✅ Title found:'{article_data['title']}'")
     else:
-        print(f"⚠️ Заголовок не знайдено для {url}")
-
+        print(f" ⚠️Title not found for {url}")
     date_time_elements = soup.select("time.post-full-meta-date, span.byline-date, meta[property='article:published_time'], p, div, span, li")
     
+    date_text_to_remove = ""
+    reading_time_text_to_remove = ""
+
     for elem in date_time_elements:
         text = elem.get_text(strip=True)
-        
+
         date_match = re.search(r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}", text)
         if date_match and not article_data["date"]:
             article_data["date"] = date_match.group(0)
-            print(f"DEBUG: Знайдено дату: '{article_data['date']}' з тексту: '{text}'")
-        
+            date_text_to_remove = "Published " + article_data["date"] 
+            print(f"DEBUG: Found date: '{article_data['date']}' from text: '{text}'")
+
         time_match = re.search(r"(\d+)\s+min read", text, re.IGNORECASE)
         if time_match and not article_data["reading_time"]:
             article_data["reading_time"] = time_match.group(0)
-            print(f"DEBUG: Знайдено час читання: '{article_data['reading_time']}' з тексту: '{text}'")
-        
+            reading_time_text_to_remove = article_data["reading_time"] 
+            print(f"DEBUG: Found reading time: '{article_data['reading_time']}' from text: '{text}'")
+
         if article_data["date"] and article_data["reading_time"]:
-            break 
+            break
 
     main_article_content_div = soup.find('div', class_='prose--styled justify-self-center post_postContent__wGZtc')
-    
-    if not main_article_content_div:
-        content_div_selectors = [
-            'div.gh-content',               
-            'div.kg-card-markdown',         
-            'section.post-full-content',    
-            'div.entry-content',            
-            'div.post-content',             
-            'div.article-body',             
-            'div.blog-post-content',        
-            'div[itemprop="articleBody"]',  
-            'div#article-content',          
-            'div.article-content',          
-            'div.content-main',             
-            'article',                      
-            'main'                          
-        ]
-        for selector in content_div_selectors:
-            main_article_content_div = soup.select_one(selector)
-            if main_article_content_div:
-                print(f"✅ Знайдено основний div контенту за запасним селектором: '{selector}'")
-                break
 
     if not main_article_content_div:
-        print(f"🚫 Не вдалося знайти основний div контенту для {url}. Пропускаємо статтю.")
+        print(f"🚫 Could not find main content div 'prose--styled justify-self-center post_postContent__wGZtc' for {url}. Skipping article.")
         return None
 
     article_content_parts = []
     images_in_content = []
     article_slug = re.sub(r'[^\w-]', '', article_data["title"].lower()[:50] or hashlib.md5(url.encode('utf-8')).hexdigest()[:8])
 
-    for child in main_article_content_div.children:
-        if child.name == 'h2' and child.get('id') == 'news':
-            print("INFO: Знайдено заголовок 'News'. Припиняємо парсинг основного контенту.")
-            break 
-        
-        if child.name == 'p' and not child.get('class'): 
-            text = child.get_text(separator='\n', strip=True)
-            if text:
-                article_content_parts.append(text)
-        
-        elif child.name == 'figure' and 'kg-card' in child.get('class', []) and 'kg-image-card' in child.get('class', []):
-            img_tag = child.find('img')
+    found_first_h2 = False
+
+    image_downloaded = False
+
+    for element in main_article_content_div.descendants:
+        if element.name: 
+            if element.name == 'h2':
+                found_first_h2 = True
+                print(f"INFO: First <h2> tag reached. Stopping parsing content and images.")
+                break 
+
+            if not image_downloaded and element.name == 'figure' and 'kg-card' in element.get('class', []) and 'kg-image-card' in element.get('class', []):
+                img_tag = element.find('img')
+                if img_tag and img_tag.get('src'):
+                    src = img_tag.get('src')
+                    if not src or src.startswith('data:'):
+                        continue
+                    full_img_url = urljoin(url, src)
+
+                    if any(x in full_img_url.lower() for x in ['icons', 'logo', 'avatar', '.svg', 'ads']):
+                        continue
+
+                    downloaded_name = download_image(full_img_url, IMAGE_DIR, article_slug)
+                    if downloaded_name:
+                        images_in_content.append(downloaded_name)
+                        image_downloaded = True 
+                        caption_tag = element.find('figcaption')
+                        if caption_tag:
+                            caption_text = caption_tag.get_text(strip=True)
+                            if caption_text:
+                                article_content_parts.append(f"Image Caption: {caption_text}")
+                continue 
+            element_text = element.get_text(separator='\n', strip=True)
+            
+            if not element_text:
+                continue 
+
+            element_text = re.sub(r'\bDear friends,?\b', '', element_text, flags=re.IGNORECASE)
+            element_text = re.sub(r'\bAndrew\b', '', element_text, flags=re.IGNORECASE)
+            element_text = re.sub(r'\bKeep learning!\b', '', element_text, flags=re.IGNORECASE)
+            element_text = re.sub(r'\bShare\b', '', element_text, flags=re.IGNORECASE) 
+            
+            if date_text_to_remove:
+                element_text = element_text.replace(date_text_to_remove, "").strip()
+            if reading_time_text_to_remove:
+                element_text = element_text.replace(reading_time_text_to_remove, "").strip()
+
+            element_text = re.sub(r'Published\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}', '', element_text).strip()
+            element_text = re.sub(r'Reading time\s+\d+\s+min read', '', element_text, flags=re.IGNORECASE).strip()
+
+
+            if element_text.strip():
+                article_content_parts.append(element_text.strip())
+    
+    article_content_elements = [] 
+    for elem in main_article_content_div.children: 
+        if elem.name == 'h2':
+            break
+        article_content_elements.append(elem)
+
+    for element in article_content_elements:
+        if not image_downloaded and element.name == 'figure' and 'kg-card' in element.get('class', []) and 'kg-image-card' in element.get('class', []):
+            img_tag = element.find('img')
             if img_tag and img_tag.get('src'):
                 src = img_tag.get('src')
                 if not src or src.startswith('data:'):
                     continue
                 full_img_url = urljoin(url, src)
-                
+
                 if any(x in full_img_url.lower() for x in ['icons', 'logo', 'avatar', '.svg', 'ads']):
                     continue
-                
+
                 downloaded_name = download_image(full_img_url, IMAGE_DIR, article_slug)
                 if downloaded_name:
                     images_in_content.append(downloaded_name)
-                    caption_tag = child.find('figcaption')
+                    image_downloaded = True
+                    caption_tag = element.find('figcaption')
                     if caption_tag:
                         caption_text = caption_tag.get_text(strip=True)
                         if caption_text:
                             article_content_parts.append(f"Image Caption: {caption_text}")
+            continue 
+
+        if element.name:
+            element_text = element.get_text(separator='\n', strip=True)
+        elif isinstance(element, str): 
+            element_text = element.strip()
+        else:
+            continue 
         
-        elif child.name in ['h1', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'div', 'blockquote']:
-            text = child.get_text(separator='\n', strip=True)
-            if text:
-                article_content_parts.append(text)
+        if not element_text:
+            continue
+
+        element_text = re.sub(r'\bDear friends,?\b', '', element_text, flags=re.IGNORECASE)
+        element_text = re.sub(r'\bAndrew\b', '', element_text, flags=re.IGNORECASE)
+        element_text = re.sub(r'\bKeep Learning,\b', '', element_text, flags=re.IGNORECASE)
+        element_text = re.sub(r'\bShare\b', '', element_text, flags=re.IGNORECASE)
+        element_text = re.sub(r'\bKeep Learning!\b', '', element_text, flags=re.IGNORECASE)
+
+        if date_text_to_remove:
+            element_text = element_text.replace(date_text_to_remove, "").strip()
+        if reading_time_text_to_remove:
+            element_text = element_text.replace(reading_time_text_to_remove, "").strip()
+
+        element_text = re.sub(r'Published\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}', '', element_text).strip()
+        element_text = re.sub(r'Reading time\s+\d+\s+min read', '', element_text, flags=re.IGNORECASE).strip()
+
+        if element_text.strip():
+            article_content_parts.append(element_text.strip())
 
 
-    article_data["content"] = "\n\n".join(article_content_parts)
+    article_data["content"] = "\n\n".join([part for part in article_content_parts if part.strip()])
     article_data["images"] = images_in_content
-    print(f"🖼️ Завантажено {len(images_in_content)} зображень.")
 
     if not article_data["content"].strip():
-        print(f"🚫 Не знайдено значущого текстового вмісту для {url}. Це може бути порожня сторінка або проблема з селекторами тексту/фільтрацією.")
+        print(f"🚫 No meaningful text content was found for {url} after filtering. This could be a blank page or a problem with text selectors/filtering.")
     else:
-        print(f"✅ Зібрано текстовий вміст (довжина: {len(article_data['content'])} символів). Початок тексту: {article_data['content'][:500]}...")
+        print(f"✅ Text content collected. Total length: {len(article_data['content'])} characters.")
+        print(f"🖼️ Loaded {len(images_in_content)} images (only one if found before h2).")
+
 
     if article_data["title"].strip() or article_data["content"].strip():
         return article_data
     else:
-        print(f"⚠️ Пропущено сторінку випуску {url} через відсутність заголовка та значного вмісту.")
+        print(f"⚠️ Skipped release page {url} due to lack of title and significant content.")
         return None
 
 def main():
@@ -258,25 +316,24 @@ def main():
 
     if os.path.exists(OUTPUT_PATH):
         os.remove(OUTPUT_PATH)
-        print(f"Видалено існуючий {OUTPUT_PATH} для чистого скрапінгу.")
+        print(f"Removed existing {OUTPUT_PATH} for clean scraping.")
 
     if os.path.exists(IMAGE_DIR):
         import shutil
         shutil.rmtree(IMAGE_DIR)
-        print(f"Видалено існуючий вміст {IMAGE_DIR} для чистого скрапінгу зображень.")
-    os.makedirs(IMAGE_DIR, exist_ok=True) 
+        print(f"Removed existing contents of {IMAGE_DIR} for clean image scraping.")
+    os.makedirs(IMAGE_DIR, exist_ok=True)
 
     issue_urls = get_all_issue_urls()
     if not issue_urls:
-        print("Не знайдено жодних URL-адрес випусків. Перевірте ROOT_DOMAIN або підключення до Інтернету.")
+        print("No release URLs found. Please check your ROOT_DOMAIN or internet connection.")
         return
 
-    print(f"🔎 Знайдено {len(issue_urls)} випусків. Починаємо обробку...")
     successful_articles_count = 0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor: 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(parse_single_issue_page, url): url for url in issue_urls}
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Обробка випусків The Batch"):
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing of The Batch releases"):
             article_from_issue = future.result()
             if article_from_issue:
                 all_articles.append(article_from_issue)
@@ -284,11 +341,11 @@ def main():
 
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         json.dump(all_articles, f, indent=2, ensure_ascii=False)
-    
-    print(f"\n--- Підсумок скрапінгу ---")
-    print(f"Загальна кількість успішно оброблених статей: {successful_articles_count}")
-    print(f"Дані збережено у: {OUTPUT_PATH}")
-    print(f"Зображення збережено у: {IMAGE_DIR}")
+
+    print(f"\n--- Scraping Summary ---")
+    print(f"Total number of successfully processed articles: {successful_articles_count}")
+    print(f"Data saved in: {OUTPUT_PATH}")
+    print(f"Image saved in: {IMAGE_DIR}")
 
 if __name__ == "__main__":
     main()
